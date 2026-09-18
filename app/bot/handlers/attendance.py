@@ -22,6 +22,97 @@ def format_duration(hours: int, minutes: int) -> str:
     return f"{hours} soat {minutes} daqiqa"
 
 
+def format_attendance_report(
+    full_name: str,
+    monthly_records: list,
+    recent_records: list,
+    now: datetime,
+    timezone,
+) -> str:
+    total_days = len({record.work_date for record in monthly_records if record.check_in_at})
+    completed_days = sum(
+        1 for record in monthly_records if record.check_in_at and record.check_out_at
+    )
+    open_days = sum(
+        1 for record in monthly_records if record.check_in_at and not record.check_out_at
+    )
+    total_seconds = sum(
+        int((record.check_out_at - record.check_in_at).total_seconds())
+        for record in monthly_records
+        if record.check_in_at and record.check_out_at
+    )
+    monthly_hours = total_seconds // 3600
+    monthly_minutes = (total_seconds % 3600) // 60
+    monthly_duration = format_duration(monthly_hours, monthly_minutes)
+    average_minutes = total_seconds // completed_days // 60 if completed_days else 0
+    average_duration = (
+        format_duration(average_minutes // 60, average_minutes % 60)
+        if completed_days
+        else "-"
+    )
+
+    today_record = next(
+        (record for record in monthly_records if record.work_date == now.date()),
+        None,
+    )
+    if today_record is None or today_record.check_in_at is None:
+        today_status = "⏳ Hali belgilanmagan"
+    elif today_record.check_out_at is None:
+        today_status = "🟢 Ishda"
+    else:
+        today_status = "✅ Ish kuni yopilgan"
+
+    lines = [
+        "📋 <b>MENING DAVOMATIM</b>",
+        f"👤 <b>Xodim:</b> {escape(full_name)}",
+        f"📅 <b>Oy:</b> {now.strftime('%B %Y')}",
+        f"🗓 <b>Bugun:</b> {today_status}",
+        "",
+        "📊 <b>OYLIK XULOSA</b>",
+        f"• Ishlangan kunlar: <b>{total_days}</b>",
+        f"• Yopilgan smenalar: <b>{completed_days}</b>",
+        f"• Ochiq smenalar: <b>{open_days}</b>",
+        f"• Jami vaqt: <b>{monthly_duration}</b>",
+        f"• O'rtacha smena: <b>{average_duration}</b>",
+    ]
+
+    if not recent_records:
+        lines.append("\nSizda hali davomat ma'lumotlari mavjud emas.")
+        return "\n".join(lines)
+
+    lines.extend(["", "─── <b>OXIRGI DAVOMATLAR</b> ───"])
+    for record in recent_records:
+        date_str = record.work_date.strftime("%d.%m")
+        branch_name = escape(record.branch.name if record.branch else "Filial")
+        check_in_time = (
+            record.check_in_at.astimezone(timezone).strftime("%H:%M")
+            if record.check_in_at
+            else "--:--"
+        )
+        check_out_time = (
+            record.check_out_at.astimezone(timezone).strftime("%H:%M")
+            if record.check_out_at
+            else "--:--"
+        )
+
+        if record.check_in_at and record.check_out_at:
+            hours, minutes = CheckInService.calculate_work_duration_static(
+                record.check_in_at, record.check_out_at
+            )
+            status_line = (
+                f"✅ {check_in_time} — {check_out_time} "
+                f"({format_duration(hours, minutes)})"
+            )
+        elif record.check_in_at:
+            status_line = f"🟢 {check_in_time} — <i>Ishda</i>"
+        else:
+            status_line = "<i>Ma'lumot yo'q</i>"
+
+        lines.append(f"\n▫️ <b>{date_str}</b> — <i>{branch_name}</i>\n   {status_line}")
+
+    return "\n".join(lines)
+
+
 @router.message(F.text == "📋 MENING DAVOMATIM")
 async def handle_my_attendance_request(message: Message, session: AsyncSession) -> None:
     """Handle '📋 MENING DAVOMATIM' button press to display employee attendance report."""
@@ -45,58 +136,12 @@ async def handle_my_attendance_request(message: Message, session: AsyncSession) 
     )
     recent_records = await attendance_repo.get_recent_attendances(user.id, limit=7)
 
-    if not recent_records:
-        await message.answer(
-            f"📋 <b>MENING DAVOMATIM</b>\n\n"
-            f"👤 <b>Xodim:</b> {escape(user.full_name)}\n\n"
-            "Sizda hali davomat ma'lumotlari mavjud emas."
+    await message.answer(
+        format_attendance_report(
+            full_name=user.full_name,
+            monthly_records=monthly_records,
+            recent_records=recent_records,
+            now=now,
+            timezone=tz,
         )
-        return
-
-    # Calculate monthly totals
-    total_days = len({rec.work_date for rec in monthly_records if rec.check_in_at})
-    total_seconds = 0
-    for rec in monthly_records:
-        if rec.check_in_at and rec.check_out_at:
-            total_seconds += int((rec.check_out_at - rec.check_in_at).total_seconds())
-
-    monthly_hours = total_seconds // 3600
-    monthly_minutes = (total_seconds % 3600) // 60
-    monthly_duration_str = format_duration(monthly_hours, monthly_minutes)
-
-    lines = [
-        "📋 <b>MENING DAVOMATIM</b>\n",
-        f"👤 <b>Xodim:</b> {escape(user.full_name)}",
-        f"📊 <b>Ushbu oy:</b> {total_days} ish kuni | Jami: {monthly_duration_str}\n",
-        "─── <b>OXIRGI DAVOMATLAR</b> ───",
-    ]
-
-    for rec in recent_records:
-        date_str = rec.work_date.strftime("%d.%m.%Y")
-        branch_name = rec.branch.name if rec.branch else "Filial"
-
-        check_in_time = (
-            rec.check_in_at.astimezone(tz).strftime("%H:%M")
-            if rec.check_in_at
-            else "--:--"
-        )
-        check_out_time = (
-            rec.check_out_at.astimezone(tz).strftime("%H:%M")
-            if rec.check_out_at
-            else "--:--"
-        )
-
-        if rec.check_in_at and rec.check_out_at:
-            h, m = CheckInService.calculate_work_duration_static(
-                rec.check_in_at, rec.check_out_at
-            )
-            duration_text = format_duration(h, m)
-            status_line = f"🟢 {check_in_time} — 🔴 {check_out_time} ({duration_text})"
-        elif rec.check_in_at:
-            status_line = f"🟢 {check_in_time} — <i>Ishda</i>"
-        else:
-            status_line = "<i>Ma'lumot yo'q</i>"
-
-        lines.append(f"\n▫️ <b>{date_str}</b> — <i>{escape(branch_name)}</i>\n   {status_line}")
-
-    await message.answer("\n".join(lines))
+    )
