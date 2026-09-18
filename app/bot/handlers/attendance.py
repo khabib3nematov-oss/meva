@@ -29,12 +29,8 @@ def format_attendance_report(
     now: datetime,
     timezone,
 ) -> str:
-    total_days = len({record.work_date for record in monthly_records if record.check_in_at})
     completed_days = sum(
         1 for record in monthly_records if record.check_in_at and record.check_out_at
-    )
-    open_days = sum(
-        1 for record in monthly_records if record.check_in_at and not record.check_out_at
     )
     total_seconds = sum(
         int((record.check_out_at - record.check_in_at).total_seconds())
@@ -69,9 +65,6 @@ def format_attendance_report(
         f"🗓 <b>Bugun:</b> {today_status}",
         "",
         "📊 <b>OYLIK XULOSA</b>",
-        f"• Ishlangan kunlar: <b>{total_days}</b>",
-        f"• Yopilgan smenalar: <b>{completed_days}</b>",
-        f"• Ochiq smenalar: <b>{open_days}</b>",
         f"• Jami vaqt: <b>{monthly_duration}</b>",
         f"• O'rtacha smena: <b>{average_duration}</b>",
     ]

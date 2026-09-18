@@ -23,6 +23,8 @@ def test_attendance_report_includes_summary_and_today_status() -> None:
     report = format_attendance_report("Ali Valiyev", [record], [record], now, timezone)
 
     assert "🗓 <b>Bugun:</b> ✅ Ish kuni yopilgan" in report
-    assert "• Ishlangan kunlar: <b>1</b>" in report
+    assert "ish kuni" not in report
+    assert "• Yopilgan smenalar" not in report
+    assert "• Ochiq smenalar" not in report
     assert "• Jami vaqt: <b>9 soat 30 daqiqa</b>" in report
     assert "• O'rtacha smena: <b>9 soat 30 daqiqa</b>" in report
