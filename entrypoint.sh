@@ -6,5 +6,8 @@ set -eu
 echo "Running database migrations..."
 alembic upgrade head
 
-echo "Database migrations complete. Starting bot..."
+echo "Seeding branches..."
+python seed_branches.py
+
+echo "Database migrations and seeding complete. Starting bot..."
 exec python -m app.main

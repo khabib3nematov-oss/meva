@@ -64,9 +64,10 @@ async def seed_branches():
             if existing:
                 existing.name = branch_data["name"]
                 existing.address = branch_data["address"]
+                existing.is_active = True
                 print(f"Updated branch #{branch_data['id']} -> {branch_data['name']}")
             else:
-                branch = Branch(**branch_data)
+                branch = Branch(**branch_data, is_active=True)
                 session.add(branch)
                 print(f"Added branch: {branch_data['name']}")
         
