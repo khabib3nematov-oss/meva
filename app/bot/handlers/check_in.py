@@ -23,6 +23,8 @@ from app.services.check_in import (
 
 class CheckInStates(StatesGroup):
     SELECTING_BRANCH = State()
+    WAITING_FOR_CHECK_IN_PHOTO = State()
+    WAITING_FOR_CHECK_OUT_PHOTO = State()
 
 
 router = Router(name=__name__)
@@ -59,7 +61,7 @@ async def handle_check_in_request(message: Message, state: FSMContext, session: 
 
 @router.message(F.text == "🔴 KETDIM")
 async def handle_check_out_request(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    """Handle KETDIM button press - direct check-out without requiring branch selection."""
+    """Ask for a photo before recording check-out."""
     if message.from_user is None:
         await message.answer("Foydalanuvchi ma'lumotlari topilmadi.")
         return
@@ -71,20 +73,39 @@ async def handle_check_out_request(message: Message, state: FSMContext, session:
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
         return
 
-    attendance_repo = AttendanceRepository(session)
-    check_in_service = CheckInService(attendance_repo)
+    await message.answer(
+        "📸 Iltimos, ishdan chiqayotganingizdagi yangi fotosuratingizni yuboring."
+    )
+    await state.set_state(CheckInStates.WAITING_FOR_CHECK_OUT_PHOTO)
+
+
+@router.message(CheckInStates.WAITING_FOR_CHECK_OUT_PHOTO, F.photo)
+async def handle_check_out_photo(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if message.from_user is None:
+        await message.answer("Foydalanuvchi ma'lumotlari topilmadi.")
+        return
+
+    user = await UserRepository(session).get_by_telegram_id(message.from_user.id)
+    if user is None:
+        await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
+        await state.clear()
+        return
 
     try:
-        updated_attendance = await check_in_service.process_check_out(user)
+        updated_attendance = await CheckInService(AttendanceRepository(session)).process_check_out(user)
     except CheckOutError as exc:
         await message.answer(
             build_check_out_error_message(exc.code),
             reply_markup=build_employee_menu_keyboard(),
         )
+        await state.clear()
         return
 
+    updated_attendance.check_out_photo_file_id = message.photo[-1].file_id
     branch_name = updated_attendance.branch.name if updated_attendance.branch else "Filial"
-
+    await state.clear()
     await message.answer(
         build_check_out_success_message(updated_attendance),
         reply_markup=build_employee_menu_keyboard(),
@@ -92,11 +113,17 @@ async def handle_check_out_request(message: Message, state: FSMContext, session:
 
     settings = get_settings()
     if settings.boss_channel_id and message.bot:
-        await notify_boss_channel(
+        await notify_boss_channel_with_photo(
             message.bot,
             settings.boss_channel_id,
             build_boss_check_out_notification(user.full_name, branch_name, updated_attendance),
+            updated_attendance.check_out_photo_file_id,
         )
+
+
+@router.message(CheckInStates.WAITING_FOR_CHECK_OUT_PHOTO)
+async def require_check_out_photo(message: Message) -> None:
+    await message.answer("📸 Iltimos, matn emas, fotosurat yuboring.")
 
 
 @router.message(CheckInStates.SELECTING_BRANCH)
@@ -105,6 +132,7 @@ async def handle_branch_selection(message: Message, state: FSMContext, session: 
     if message.from_user is None or message.text is None:
         await message.answer("Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.")
         await state.clear()
+        return
     if message.text == "🔴 KETDIM":
         await state.clear()
         await handle_check_out_request(message, state, session)
@@ -136,8 +164,6 @@ async def handle_branch_selection(message: Message, state: FSMContext, session: 
         await state.clear()
         return
 
-    await state.clear()
-
     # Process check-in
     try:
         is_valid, distance_meters = await check_in_service.validate_check_in(
@@ -154,26 +180,75 @@ async def handle_branch_selection(message: Message, state: FSMContext, session: 
         return
 
     if is_valid and distance_meters is not None:
-        await check_in_service.create_attendance(
-            employee=user,
-            branch=selected_branch,
-            latitude=float(selected_branch.latitude),
-            longitude=float(selected_branch.longitude),
-            distance_meters=distance_meters,
-        )
-
+        await state.update_data(selected_branch_id=selected_branch.id)
+        await state.set_state(CheckInStates.WAITING_FOR_CHECK_IN_PHOTO)
         await message.answer(
-            build_check_in_success_message(selected_branch.name),
+            f"✅ Filial tanlandi: {escape(selected_branch.name)}\n\n"
+            "📸 Endi ishga kelganingizdagi yangi fotosuratingizni yuboring.",
             reply_markup=build_employee_menu_keyboard(),
         )
 
-        settings = get_settings()
-        if settings.boss_channel_id and message.bot:
-            await notify_boss_channel(
-                message.bot,
-                settings.boss_channel_id,
-                build_boss_check_in_notification(user.full_name, selected_branch.name),
-            )
+
+@router.message(CheckInStates.WAITING_FOR_CHECK_IN_PHOTO, F.photo)
+async def handle_check_in_photo(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if message.from_user is None:
+        await message.answer("Foydalanuvchi ma'lumotlari topilmadi.")
+        return
+
+    state_data = await state.get_data()
+    branch_id = state_data.get("selected_branch_id")
+    branch = await BranchRepository(session).get_by_id(branch_id) if branch_id else None
+    user = await UserRepository(session).get_by_telegram_id(message.from_user.id)
+    if user is None or branch is None:
+        await message.answer("Sessiya tugadi. Iltimos, 🟢 KELDIM tugmasini qayta bosing.")
+        await state.clear()
+        return
+
+    check_in_service = CheckInService(AttendanceRepository(session))
+    try:
+        is_valid, distance_meters = await check_in_service.validate_check_in(
+            employee=user,
+            branch=branch,
+            latitude=float(branch.latitude),
+            longitude=float(branch.longitude),
+        )
+    except CheckInError as exc:
+        await message.answer(
+            build_check_in_error_message(exc.code),
+            reply_markup=build_employee_menu_keyboard(),
+        )
+        await state.clear()
+        return
+
+    attendance = await check_in_service.create_attendance(
+        employee=user,
+        branch=branch,
+        latitude=float(branch.latitude),
+        longitude=float(branch.longitude),
+        distance_meters=distance_meters or 0.0,
+    )
+    attendance.check_in_photo_file_id = message.photo[-1].file_id
+    await state.clear()
+    await message.answer(
+        build_check_in_success_message(branch.name),
+        reply_markup=build_employee_menu_keyboard(),
+    )
+
+    settings = get_settings()
+    if settings.boss_channel_id and message.bot:
+        await notify_boss_channel_with_photo(
+            message.bot,
+            settings.boss_channel_id,
+            build_boss_check_in_notification(user.full_name, branch.name),
+            attendance.check_in_photo_file_id,
+        )
+
+
+@router.message(CheckInStates.WAITING_FOR_CHECK_IN_PHOTO)
+async def require_check_in_photo(message: Message) -> None:
+    await message.answer("📸 Iltimos, matn emas, fotosurat yuboring.")
 
 
 def build_check_in_success_message(branch_name: str) -> str:
@@ -260,6 +335,17 @@ async def notify_boss_channel(bot, channel_id: str | int, text: str) -> None:
         await bot.send_message(chat_id=channel_id, text=text)
     except Exception:
         logger.exception("failed_to_send_boss_channel_notification")
+
+
+async def notify_boss_channel_with_photo(
+    bot, channel_id: str | int, caption: str, photo_file_id: str
+) -> None:
+    if not bot or not channel_id:
+        return
+    try:
+        await bot.send_photo(chat_id=channel_id, photo=photo_file_id, caption=caption)
+    except Exception:
+        logger.exception("failed_to_send_boss_photo_notification")
 
 
 def format_duration(hours: int, minutes: int) -> str:
