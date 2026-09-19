@@ -47,3 +47,5 @@ def test_daily_admin_report_lists_employee_time_and_status() -> None:
     assert "Ali Valiyev" in report
     assert "08:15" in report
     assert "🟢 Ishda" in report
+    assert "🟢 <b>HOZIR ISHLAYOTGANLAR</b>" in report
+    assert "🏪 Keles" in report
