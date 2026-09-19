@@ -44,6 +44,8 @@ class AttendanceRepositoryProtocol(Protocol):
         self, employee_id: int, year: int, month: int
     ) -> list[Attendance]: ...
 
+    async def get_by_work_date(self, work_date: date) -> list[Attendance]: ...
+
 
 class AttendanceRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -142,6 +144,16 @@ class AttendanceRepository:
             )
             .options(selectinload(Attendance.branch))
             .order_by(Attendance.work_date.desc())
+        )
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_work_date(self, work_date: date) -> list[Attendance]:
+        statement = (
+            select(Attendance)
+            .where(Attendance.work_date == work_date)
+            .options(selectinload(Attendance.employee), selectinload(Attendance.branch))
+            .order_by(Attendance.check_in_at.asc(), Attendance.id.asc())
         )
         result = await self._session.execute(statement)
         return list(result.scalars().all())

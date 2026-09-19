@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     bot_token: SecretStr | None = None
     boss_channel_id: str | int | None = Field(default=None, alias="BOSS_CHANNEL_ID")
+    owner_telegram_ids: str = "1002484373,5867823541"
 
     timezone: str = "Asia/Tashkent"
     log_level: str = "INFO"
@@ -73,6 +74,14 @@ class Settings(BaseSettings):
             raise RuntimeError("BOT_TOKEN is required to start the Telegram bot.")
 
         return token
+
+    @property
+    def owner_ids(self) -> frozenset[int]:
+        return frozenset(
+            int(value.strip())
+            for value in self.owner_telegram_ids.split(",")
+            if value.strip()
+        )
 
     @property
     def sqlalchemy_database_url(self) -> str:
