@@ -334,7 +334,10 @@ async def notify_boss_channel(bot, channel_id: str | int, text: str) -> None:
     try:
         await bot.send_message(chat_id=channel_id, text=text)
     except Exception:
-        logger.exception("failed_to_send_boss_channel_notification")
+        logger.exception(
+            "failed_to_send_boss_channel_notification",
+            extra={"boss_chat_id": str(channel_id)},
+        )
 
 
 async def notify_boss_channel_with_photo(
@@ -345,7 +348,10 @@ async def notify_boss_channel_with_photo(
     try:
         await bot.send_photo(chat_id=channel_id, photo=photo_file_id, caption=caption)
     except Exception:
-        logger.exception("failed_to_send_boss_photo_notification")
+        logger.exception(
+            "failed_to_send_boss_photo_notification",
+            extra={"boss_chat_id": str(channel_id)},
+        )
 
 
 def format_duration(hours: int, minutes: int) -> str:

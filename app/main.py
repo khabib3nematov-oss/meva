@@ -56,6 +56,25 @@ async def run_bot() -> None:
     health_server_task = asyncio.create_task(run_health_server())
 
     try:
+        if settings.boss_channel_id:
+            try:
+                boss_chat = await bot.get_chat(settings.boss_channel_id)
+                logger.info(
+                    "boss_chat_verified",
+                    extra={
+                        "boss_chat_id": boss_chat.id,
+                        "boss_chat_type": boss_chat.type,
+                        "boss_chat_title": boss_chat.title,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "boss_chat_verification_failed",
+                    extra={"boss_chat_id": str(settings.boss_channel_id)},
+                )
+        else:
+            logger.warning("boss_chat_not_configured")
+
         await ping_database(engine)
         logger.info(
             "database_connection_verified",
