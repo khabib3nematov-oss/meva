@@ -26,6 +26,15 @@ class UserRepository:
         statement = select(User).where(User.phone == phone)
         return await self._session.scalar(statement)
 
+    async def get_active_workers_for_reminders(self) -> list[User]:
+        statement = select(User).where(
+            User.is_active.is_(True),
+            User.telegram_id.isnot(None),
+            User.role.in_([UserRole.EMPLOYEE, UserRole.MANAGER]),
+        )
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
+
     async def create_user(
         self,
         telegram_id: int,

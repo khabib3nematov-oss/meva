@@ -17,6 +17,7 @@ from app.database.session import (
     ping_database,
 )
 from app.logging_config import configure_logging
+from app.services.reminders import run_worker_reminders
 
 
 async def healthcheck(_: web.Request) -> web.Response:
@@ -52,8 +53,12 @@ async def run_bot() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     engine = create_async_engine_from_settings(settings)
-    dispatcher = create_dispatcher(create_session_maker(engine))
+    session_maker = create_session_maker(engine)
+    dispatcher = create_dispatcher(session_maker)
     health_server_task = asyncio.create_task(run_health_server())
+    reminder_task = asyncio.create_task(
+        run_worker_reminders(bot, session_maker, settings.tzinfo)
+    )
 
     try:
         if settings.boss_channel_id:
@@ -87,6 +92,7 @@ async def run_bot() -> None:
                 allowed_updates=dispatcher.resolve_used_update_types(),
             ),
             health_server_task,
+            reminder_task,
         )
     except SQLAlchemyError:
         logger.exception("database_connection_failed")
@@ -96,8 +102,11 @@ async def run_bot() -> None:
         raise
     finally:
         health_server_task.cancel()
+        reminder_task.cancel()
         with suppress(asyncio.CancelledError):
             await health_server_task
+        with suppress(asyncio.CancelledError):
+            await reminder_task
         await engine.dispose()
         await bot.session.close()
         logger.info("bot_shutdown_complete")
