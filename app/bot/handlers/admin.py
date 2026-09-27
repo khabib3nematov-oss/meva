@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.repositories.attendance import AttendanceRepository
+from app.repositories.users import UserRepository
 
 
 router = Router(name=__name__)
@@ -85,6 +86,82 @@ async def handle_admin_report(message: Message, session: AsyncSession) -> None:
     now = datetime.now(timezone)
     records = await AttendanceRepository(session).get_by_work_date(now.date())
     await message.answer(format_daily_admin_report(records, now))
+
+
+async def decide_registration_request(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    *,
+    approved: bool,
+) -> None:
+    settings = get_settings()
+    if callback.from_user.id not in settings.owner_ids:
+        await callback.answer("Bu amal faqat rahbarlar uchun.", show_alert=True)
+        return
+
+    try:
+        user_id = int((callback.data or "").split(":", 1)[1])
+    except (IndexError, ValueError):
+        await callback.answer("Noto'g'ri ariza.", show_alert=True)
+        return
+
+    user_repository = UserRepository(session)
+    user = await user_repository.get_by_id(user_id)
+    if user is None:
+        await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+        return
+
+    changed = await user_repository.decide_registration_request(
+        user_id,
+        approved=approved,
+        decided_by_telegram_id=callback.from_user.id,
+    )
+    if not changed:
+        await callback.answer("Bu ariza avval ko'rib chiqilgan.", show_alert=True)
+        return
+    await session.commit()
+
+    if isinstance(callback.message, Message):
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.exception(
+                "failed_to_remove_registration_decision_buttons",
+                extra={"user_id": user_id},
+            )
+
+    decision_text = "tasdiqlandi" if approved else "rad etildi"
+    await callback.answer(f"Ariza {decision_text}.")
+    if callback.bot and user.telegram_id:
+        worker_message = (
+            "✅ Arizangiz tasdiqlandi. Endi botdan foydalanishingiz mumkin. /start ni bosing."
+            if approved
+            else "Arizangiz rahbar tomonidan rad etildi. Ma'lumot uchun rahbarga murojaat qiling."
+        )
+        try:
+            await callback.bot.send_message(
+                chat_id=user.telegram_id,
+                text=worker_message,
+            )
+        except Exception:
+            logger.exception(
+                "failed_to_notify_worker_about_registration_decision",
+                extra={"telegram_id": user.telegram_id, "approved": approved},
+            )
+
+
+@router.callback_query(F.data.startswith("registration_approve:"))
+async def handle_registration_approval(
+    callback: CallbackQuery, session: AsyncSession
+) -> None:
+    await decide_registration_request(callback, session, approved=True)
+
+
+@router.callback_query(F.data.startswith("registration_reject:"))
+async def handle_registration_rejection(
+    callback: CallbackQuery, session: AsyncSession
+) -> None:
+    await decide_registration_request(callback, session, approved=False)
 
 
 @router.callback_query(F.data.startswith("checkout_fix:"))

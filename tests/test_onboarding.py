@@ -1,11 +1,15 @@
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.models import Base
 from app.models.enums import UserRole
 from app.models.user import User
+from app.repositories.users import UserRepository
 from app.services.onboarding import (
     EmployeeOnboardingService,
     OnboardingError,
     OnboardingErrorCode,
+    account_access_message,
 )
 from app.utils.phone import normalize_phone_number
 
@@ -26,6 +30,7 @@ class FakeUserRepository:
         full_name: str,
         phone: str | None = None,
         role: UserRole = UserRole.EMPLOYEE,
+        approval_status: str = "PENDING",
     ) -> User:
         user = User(
             id=len(self.users) + 1,
@@ -33,7 +38,8 @@ class FakeUserRepository:
             full_name=full_name,
             phone=phone,
             role=role,
-            is_active=True,
+            approval_status=approval_status,
+            is_active=approval_status == "APPROVED",
         )
         self.users.append(user)
         return user
@@ -73,6 +79,8 @@ async def test_register_new_user_without_phone() -> None:
     assert registered.telegram_id == 100
     assert registered.full_name == "Ali Valiyev"
     assert registered.phone is None
+    assert registered.approval_status == "PENDING"
+    assert registered.is_active is False
     assert len(repo.users) == 1
 
 
@@ -103,3 +111,57 @@ async def test_register_new_user_rejects_existing_phone() -> None:
         )
 
     assert exc_info.value.code == OnboardingErrorCode.PHONE_ALREADY_EXISTS
+
+
+def test_pending_and_rejected_users_receive_access_messages() -> None:
+    pending = make_user(is_active=False)
+    pending.approval_status = "PENDING"
+    rejected = make_user(is_active=False)
+    rejected.approval_status = "REJECTED"
+
+    assert "kutmoqda" in (account_access_message(pending) or "")
+    assert "rad etildi" in (account_access_message(rejected) or "")
+
+
+async def test_owner_can_approve_a_pending_user_only_once() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_maker() as session:
+        user = User(
+            telegram_id=987654,
+            full_name="New Employee",
+            role=UserRole.EMPLOYEE,
+            approval_status="PENDING",
+            is_active=False,
+        )
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+        repository = UserRepository(session)
+        approved = await repository.decide_registration_request(
+            user_id,
+            approved=True,
+            decided_by_telegram_id=1002484373,
+        )
+        await session.commit()
+        await session.refresh(user)
+
+        assert approved is True
+        assert user.approval_status == "APPROVED"
+        assert user.is_active is True
+        assert user.approval_decided_by_telegram_id == 1002484373
+        assert user.approval_decided_at is not None
+        assert (
+            await repository.decide_registration_request(
+                user_id,
+                approved=False,
+                decided_by_telegram_id=5867823541,
+            )
+            is False
+        )
+
+    await engine.dispose()

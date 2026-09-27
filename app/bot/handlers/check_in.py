@@ -20,6 +20,7 @@ from app.services.check_in import (
     CheckOutError,
     CheckOutErrorCode,
 )
+from app.services.onboarding import account_access_message
 
 
 class CheckInStates(StatesGroup):
@@ -43,6 +44,11 @@ async def handle_check_in_request(message: Message, state: FSMContext, session: 
 
     if user is None:
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
+        return
+    access_message = account_access_message(user)
+    if access_message:
+        await state.clear()
+        await message.answer(access_message)
         return
 
     settings = get_settings()
@@ -141,6 +147,11 @@ async def handle_check_out_request(message: Message, state: FSMContext, session:
     if user is None:
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
         return
+    access_message = account_access_message(user)
+    if access_message:
+        await state.clear()
+        await message.answer(access_message)
+        return
 
     await message.answer(
         "📸 Iltimos, ishdan chiqayotganingizdagi yangi fotosuratingizni yuboring."
@@ -160,6 +171,11 @@ async def handle_check_out_photo(
     if user is None:
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
         await state.clear()
+        return
+    access_message = account_access_message(user)
+    if access_message:
+        await state.clear()
+        await message.answer(access_message)
         return
 
     try:
@@ -232,6 +248,11 @@ async def handle_branch_selection(message: Message, state: FSMContext, session: 
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
         await state.clear()
         return
+    access_message = account_access_message(user)
+    if access_message:
+        await state.clear()
+        await message.answer(access_message)
+        return
 
     # Process check-in
     try:
@@ -273,6 +294,11 @@ async def handle_check_in_photo(
     if user is None or branch is None:
         await message.answer("Sessiya tugadi. Iltimos, 🟢 KELDIM tugmasini qayta bosing.")
         await state.clear()
+        return
+    access_message = account_access_message(user)
+    if access_message:
+        await state.clear()
+        await message.answer(access_message)
         return
 
     check_in_service = CheckInService(AttendanceRepository(session))

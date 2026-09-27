@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, Index, String, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -26,6 +27,14 @@ class User(TimestampMixin, Base):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role"), nullable=False)
+    approval_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="APPROVED",
+        server_default=text("'APPROVED'"),
+    )
+    approval_decided_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger)
+    approval_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="SET NULL"))
     is_active: Mapped[bool] = mapped_column(
         Boolean,

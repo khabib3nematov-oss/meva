@@ -7,6 +7,12 @@ class UserRole(StrEnum):
     EMPLOYEE = "EMPLOYEE"
 
 
+class UserApprovalStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class AttendanceStatus(StrEnum):
     PRESENT = "PRESENT"
     LATE = "LATE"

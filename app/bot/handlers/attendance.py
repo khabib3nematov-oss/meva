@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.repositories import AttendanceRepository, UserRepository
 from app.services.check_in import CheckInService
+from app.services.onboarding import account_access_message
 
 router = Router(name=__name__)
 
@@ -118,6 +119,10 @@ async def handle_my_attendance_request(message: Message, session: AsyncSession) 
 
     if user is None:
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
+        return
+    access_message = account_access_message(user)
+    if access_message:
+        await message.answer(access_message)
         return
 
     attendance_repo = AttendanceRepository(session)

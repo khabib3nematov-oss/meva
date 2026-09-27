@@ -1,18 +1,21 @@
+import logging
 from html import escape
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.bot.keyboards import build_employee_menu_keyboard, build_share_phone_keyboard
 from app.repositories import UserRepository
 from app.services.onboarding import (
     EmployeeOnboardingService,
     OnboardingError,
     OnboardingErrorCode,
+    account_access_message,
 )
 
 
@@ -22,6 +25,7 @@ class OnboardingStates(StatesGroup):
 
 
 router = Router(name=__name__)
+logger = logging.getLogger(__name__)
 
 
 @router.message(CommandStart())
@@ -35,15 +39,15 @@ async def handle_start(message: Message, state: FSMContext, session: AsyncSessio
     service = EmployeeOnboardingService(UserRepository(session))
     user = await service.get_registered_user(message.from_user.id)
 
-    if user is not None and user.is_active:
+    if user is not None:
+        access_message = account_access_message(user)
+        if access_message:
+            await message.answer(access_message)
+            return
         await message.answer(
             build_employee_menu_text(user.full_name),
             reply_markup=build_employee_menu_keyboard(),
         )
-        return
-
-    if user is not None and not user.is_active:
-        await message.answer("Hisobingiz faol emas. Iltimos, menejerga murojaat qiling.")
         return
 
     await message.answer(
@@ -71,10 +75,71 @@ async def handle_name(message: Message, state: FSMContext, session: AsyncSession
     )
 
     await state.clear()
+    if user.approval_status == "PENDING":
+        await session.commit()
+        await notify_owners_of_registration(message, user)
+        await message.answer(
+            "✅ Arizangiz rahbarlarga yuborildi. Hisobingiz tasdiqlangach, botdan "
+            "foydalanishingiz mumkin."
+        )
+        return
+
+    access_message = account_access_message(user)
+    if access_message:
+        await message.answer(access_message)
+        return
+
     await message.answer(
         build_employee_menu_text(user.full_name),
         reply_markup=build_employee_menu_keyboard(),
     )
+
+
+async def notify_owners_of_registration(message: Message, user) -> None:
+    settings = get_settings()
+    if message.bot is None:
+        logger.error("cannot_notify_owners_without_bot_instance")
+        return
+
+    username = message.from_user.username if message.from_user else None
+    username_line = f"\n🔗 <b>Username:</b> @{escape(username)}" if username else ""
+    request_text = (
+        "🆕 <b>YANGI XODIM RO'YXATDAN O'TMOQCHI</b>\n\n"
+        f"👤 <b>Ism:</b> {escape(user.full_name)}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{user.telegram_id}</code>"
+        f"{username_line}\n\nUshbu xodimga botdan foydalanishga ruxsat berasizmi?"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Tasdiqlash",
+                    callback_data=f"registration_approve:{user.id}",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Rad etish",
+                    callback_data=f"registration_reject:{user.id}",
+                ),
+            ]
+        ]
+    )
+    destinations = (
+        [settings.boss_channel_id]
+        if settings.boss_channel_id
+        else list(settings.owner_ids)
+    )
+    for destination in destinations:
+        try:
+            await message.bot.send_message(
+                chat_id=destination,
+                text=request_text,
+                reply_markup=keyboard,
+            )
+        except Exception:
+            logger.exception(
+                "failed_to_send_registration_approval_request",
+                extra={"destination_id": str(destination), "telegram_id": user.telegram_id},
+            )
 
 
 def build_employee_menu_text(name: str) -> str:

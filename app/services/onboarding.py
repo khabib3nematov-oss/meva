@@ -30,6 +30,7 @@ class UserRepositoryProtocol(Protocol):
         full_name: str,
         phone: str | None = None,
         role: UserRole = UserRole.EMPLOYEE,
+        approval_status: str = "PENDING",
     ) -> User: ...
 
 
@@ -67,4 +68,15 @@ class EmployeeOnboardingService:
             full_name=full_name,
             phone=normalized_phone,
             role=UserRole.EMPLOYEE,
+            approval_status="PENDING",
         )
+
+
+def account_access_message(user: User) -> str | None:
+    if user.approval_status == "PENDING":
+        return "Arizangiz rahbar ko'rib chiqishini kutmoqda. Tasdiqlangach xabar beramiz."
+    if user.approval_status == "REJECTED":
+        return "Ro'yxatdan o'tish so'rovingiz rad etildi. Ma'lumot uchun rahbarga murojaat qiling."
+    if not user.is_active:
+        return "Hisobingiz faol emas. Iltimos, menejerga murojaat qiling."
+    return None
