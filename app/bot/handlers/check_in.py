@@ -1,10 +1,11 @@
+from datetime import datetime
 import logging
 from html import escape
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -42,6 +43,74 @@ async def handle_check_in_request(message: Message, state: FSMContext, session: 
 
     if user is None:
         await message.answer("Hisobingiz topilmadi. Iltimos, /start buyrug'ini bosing.")
+        return
+
+    settings = get_settings()
+    attendance_repo = AttendanceRepository(session)
+    today = datetime.now(settings.tzinfo).date()
+    stale_attendances = await attendance_repo.get_stale_open_attendances(
+        user.id, today
+    )
+    if stale_attendances:
+        await state.clear()
+        await message.answer(
+            "⚠️ Sizda oldingi kundan yopilmagan smena bor. "
+            "Yangi kelish belgilanmadi. Rahbarlar smenani tekshirgach qayta urinib ko'ring."
+        )
+        for attendance in stale_attendances:
+            check_in_at = attendance.check_in_at
+            if check_in_at is not None:
+                if check_in_at.tzinfo is None:
+                    check_in_at = check_in_at.replace(tzinfo=settings.tzinfo)
+                check_in_text = check_in_at.astimezone(settings.tzinfo).strftime(
+                    "%d.%m.%Y %H:%M"
+                )
+            else:
+                check_in_text = "--"
+            branch_name = escape(attendance.branch.name if attendance.branch else "Filial")
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Указать время ухода",
+                            callback_data=f"checkout_fix:{attendance.id}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="Оставить смену открытой",
+                            callback_data=f"checkout_keep:{attendance.id}",
+                        )
+                    ],
+                ]
+            )
+            alert = (
+                "⚠️ <b>НЕЗАКРЫТАЯ СМЕНА</b>\n\n"
+                f"👤 <b>Сотрудник:</b> {escape(user.full_name)}\n"
+                f"🏪 <b>Филиал:</b> {branch_name}\n"
+                f"📅 <b>Дата:</b> {attendance.work_date.strftime('%d.%m.%Y')}\n"
+                f"🟢 <b>Приход:</b> {check_in_text}\n\n"
+                "Сотрудник попытался начать новую смену. Новая отметка пока не создана."
+            )
+            if message.bot is None:
+                continue
+            destinations = (
+                [settings.boss_channel_id]
+                if settings.boss_channel_id
+                else list(settings.owner_ids)
+            )
+            for destination in destinations:
+                try:
+                    await message.bot.send_message(
+                        chat_id=destination,
+                        text=alert,
+                        reply_markup=keyboard,
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed_to_send_stale_attendance_alert",
+                        extra={"destination_id": str(destination)},
+                    )
         return
 
     branch_repo = BranchRepository(session)

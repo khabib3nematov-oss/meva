@@ -1,11 +1,13 @@
-from datetime import datetime, time
+from datetime import date, datetime, time
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, User, UserRole
+from app.models import Attendance, AttendanceStatus, Base, Branch, User, UserRole
+from app.repositories.attendance import AttendanceRepository
 from app.services.reminders import get_next_reminder_at, send_worker_reminder
 
 
@@ -59,4 +61,53 @@ async def test_reminder_sends_only_to_active_employees_and_managers() -> None:
         101,
         102,
     }
+    await engine.dispose()
+
+
+async def test_stale_open_attendance_can_be_corrected_with_owner_attribution() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    timezone = ZoneInfo("Asia/Tashkent")
+    async with session_maker() as session:
+        employee = User(
+            telegram_id=201,
+            full_name="Worker",
+            role=UserRole.EMPLOYEE,
+        )
+        branch = Branch(
+            name="Keles",
+            latitude=Decimal("41.380000"),
+            longitude=Decimal("69.200000"),
+            allowed_radius_meters=100,
+        )
+        session.add_all([employee, branch])
+        await session.flush()
+        attendance = Attendance(
+            employee_id=employee.id,
+            branch_id=branch.id,
+            work_date=date(2026, 9, 26),
+            check_in_at=datetime(2026, 9, 26, 8, 0, tzinfo=timezone),
+            status=AttendanceStatus.PRESENT,
+        )
+        session.add(attendance)
+        await session.flush()
+
+        repository = AttendanceRepository(session)
+        stale_records = await repository.get_stale_open_attendances(
+            employee.id, date(2026, 9, 27)
+        )
+        assert [record.id for record in stale_records] == [attendance.id]
+
+        corrected_at = datetime(2026, 9, 26, 21, 45, tzinfo=timezone)
+        await repository.correct_check_out(attendance, corrected_at, 1002484373)
+        await session.commit()
+
+        assert attendance.check_out_at == corrected_at
+        assert attendance.check_out_corrected_by_telegram_id == 1002484373
+        assert attendance.check_out_corrected_at is not None
+        assert attendance.check_out_correction_reason is not None
+
     await engine.dispose()

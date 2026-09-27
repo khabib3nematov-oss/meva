@@ -2,7 +2,17 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -43,6 +53,9 @@ class Attendance(TimestampMixin, Base):
     check_out_distance_meters: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     check_in_photo_file_id: Mapped[str | None] = mapped_column(String(255))
     check_out_photo_file_id: Mapped[str | None] = mapped_column(String(255))
+    check_out_corrected_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger)
+    check_out_corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    check_out_correction_reason: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[AttendanceStatus] = mapped_column(
         Enum(AttendanceStatus, name="attendance_status"),
         nullable=False,

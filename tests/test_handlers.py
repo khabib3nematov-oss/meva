@@ -3,7 +3,10 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from app.bot.handlers.attendance import format_attendance_report
-from app.bot.handlers.admin import format_daily_admin_report
+from app.bot.handlers.admin import (
+    format_daily_admin_report,
+    parse_checkout_correction_time,
+)
 from app.bot.handlers.start import build_employee_menu_text
 
 
@@ -49,3 +52,12 @@ def test_daily_admin_report_lists_employee_time_and_status() -> None:
     assert "🟢 Ishda" in report
     assert "🟢 <b>HOZIR ISHLAYOTGANLAR</b>" in report
     assert "🏪 Keles" in report
+
+
+def test_parse_checkout_correction_time_requires_full_local_datetime() -> None:
+    timezone = ZoneInfo("Asia/Tashkent")
+
+    parsed = parse_checkout_correction_time("26.09.2026 21:45", timezone)
+
+    assert parsed == datetime(2026, 9, 26, 21, 45, tzinfo=timezone)
+    assert parse_checkout_correction_time("21:45", timezone) is None

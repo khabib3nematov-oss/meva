@@ -157,3 +157,42 @@ class AttendanceRepository:
         )
         result = await self._session.execute(statement)
         return list(result.scalars().all())
+
+    async def get_stale_open_attendances(
+        self, employee_id: int, before_date: date
+    ) -> list[Attendance]:
+        statement = (
+            select(Attendance)
+            .where(
+                Attendance.employee_id == employee_id,
+                Attendance.work_date < before_date,
+                Attendance.check_in_at.isnot(None),
+                Attendance.check_out_at.is_(None),
+            )
+            .options(selectinload(Attendance.branch))
+            .order_by(Attendance.work_date.desc(), Attendance.id.desc())
+        )
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, attendance_id: int) -> Attendance | None:
+        statement = (
+            select(Attendance)
+            .where(Attendance.id == attendance_id)
+            .options(selectinload(Attendance.employee), selectinload(Attendance.branch))
+        )
+        return await self._session.scalar(statement)
+
+    async def correct_check_out(
+        self,
+        attendance: Attendance,
+        check_out_at: datetime,
+        corrected_by_telegram_id: int,
+    ) -> Attendance:
+        attendance.check_out_at = check_out_at
+        attendance.check_out_corrected_by_telegram_id = corrected_by_telegram_id
+        attendance.check_out_corrected_at = datetime.now(check_out_at.tzinfo)
+        attendance.check_out_correction_reason = "Missed checkout corrected by owner"
+        self._session.add(attendance)
+        await self._session.flush()
+        return attendance
